@@ -1,7 +1,10 @@
 package mapreduce
 
 import (
+	"encoding/json"
 	"hash/fnv"
+	"log"
+	"os"
 )
 
 // doMap does the job of a map worker: it reads one of the input files
@@ -40,6 +43,47 @@ func doMap(
 	//     err := enc.Encode(&kv)
 	//
 	// Remember to close the file after you have written all the values!
+	file, err := os.Open(inFile)
+	if err != nil {
+		log.Fatal("DoMap", err)
+	}
+	fileInfo, err := file.Stat()
+	if err != nil {
+		log.Fatal("DoMap", err)
+	}
+
+	size := fileInfo.Size()
+	b := make([]byte, size)
+	_, err = file.Read(b)
+	if err != nil {
+		log.Fatal("DoMap", err)
+	}
+	file.Close()
+
+	res := mapF(inFile, string(b))
+
+	intermediateFile := []*os.File{}
+	enc := []*json.Encoder{}
+	for r := 0; r < nReduce; r++ {
+		file, err := os.Create(reduceName(jobName, mapTaskNumber, r))
+		if err != nil {
+			log.Fatal("DoMap", err)
+		}
+		intermediateFile = append(intermediateFile, file)
+		enctmp := json.NewEncoder(intermediateFile[r])
+		enc = append(enc, enctmp)
+	}
+
+	for _, kv := range res {
+		err = enc[ihash(kv.Key)%uint32(nReduce)].Encode(&kv)
+		if err != nil {
+			log.Fatal("DoMap", err)
+		}
+	}
+
+	for r := 0; r < nReduce; r++ {
+		intermediateFile[r].Close()
+	}
 }
 
 func ihash(s string) uint32 {
